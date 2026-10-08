@@ -266,16 +266,59 @@ the code the desktop was measured on.
 ## What to expect
 
 `smoke` trains a 0.1 M model for 200 iterations on 400 games. It plays badly —
-that is the point; it proves the plumbing, not the chess. Rough signposts for a
-real `small` run:
+that is the point; it proves the plumbing, not the chess.
 
-- **from-slot loss falling below to-slot loss** is the first sign it is tracking
-  the board rather than memorizing move frequencies.
-- **unmasked legal rate** is the number to watch. Single digits means the
-  network knows nothing and the mask is carrying it. Published PGN-trained GPTs
-  get well above 90% at ~25 M parameters; a 3 M model will land lower.
-- **ACPL and the match score** are the only measures of strength that matter.
-  Start the match at `--skill 0 --sf-nodes 1000` and raise it when you win.
+### Measured: `small` on Lichess Elite 2020-06
+
+3.17 M params, 12,000 steps (5.6 epochs over 52.8 M tokens), 15 min on an
+RTX 4050. Final train 1.2797 / val 1.2976 — a 0.018 gap, so nothing memorized.
+
+| metric | result | reading |
+|---|---|---|
+| val loss | 1.2976 (ppl 3.66) | ~4 effective candidates out of 80 tokens |
+| legal, unmasked | **91.9%** (n=1000) | it really tracks the board; the mask is a net, not a crutch |
+| top-1 == stockfish d10 | 30.5% | |
+| top-1 == the human move | 38.8% | |
+| centipawn loss | median **46**, mean 317 | mostly sound moves, occasional disaster |
+| blunders >300cp | 15.5% | this is what the mean/median gap is |
+| vs stockfish skill 0 @1000n | +0 =30 −70 → −301 ± 49 Elo | |
+| vs a uniform random mover | +8 =32 −0 | **never loses, almost never converts** |
+| ms/move (x86, numpy) | 21.3 mean, 9.1 forwards/move | 65 MB RSS |
+
+It plays book openings properly — a full English Attack Najdorf,
+`1.e4 c5 2.Nf3 d6 3.d4 cxd4 4.Nxd4 Nf6 5.Nc3 a6 6.Be3 e5 7.Be2 Be7 8.O-O O-O`,
+recapturing on d4 at 98% confidence. Then it cannot finish. Thirty-two draws in
+forty games against a *random mover*, and every single draw against Stockfish
+was by threefold repetition (median eval at that point: −655 cp, so it was
+mostly repeating to save lost positions, not squandering won ones).
+
+That failure is structural, not a training bug. Next-token prediction with no
+search cannot calculate a mate, and endgames are the sparse tail of the data —
+every game shares an opening, while winning technique is diverse and rare. Three
+levers, in order of expected payoff:
+
+1. `make train MODEL=medium` — 25 M params on the same data, ~6 h. 8× the
+   capacity is the single biggest lever.
+2. More tokens: `chess_uci_all` is +35%, and more Lichess months are free.
+3. Accept that conversion needs search. A 2-ply search over the masked move
+   distribution with a material eval would kill most of the 15.5% blunders and
+   most of the repetition draws, for a few extra forward passes per move. It is
+   no longer "just a language model", which is a design call, not a bug fix.
+
+### A prediction this made that turned out wrong
+
+An earlier draft of this file said "from-slot loss falling below to-slot loss is
+the first sign it is tracking the board". That was backwards. Measured:
+
+```
+loss (from   ) : 1.4328   ppl 4.19
+loss (to     ) : 0.9844   ppl 2.68
+```
+
+`to` is *structurally* easier and always will be: it is conditioned on the
+origin square, which usually leaves two or three destinations, whereas the
+`from` slot is choosing among ~16 movable pieces. The ordering says nothing
+about board understanding. Use the unmasked legal rate for that.
 
 ## Open questions this prototype is meant to answer
 

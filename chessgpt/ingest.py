@@ -46,9 +46,13 @@ def _raw_games(path, start, end):
 
         for line in fh:
             if line.startswith(EVENT) and have_moves:
-                yield b''.join(buf), game_start
+                # Stop BEFORE yielding a game that starts at or past our end:
+                # that game belongs to the next worker, which seeks to `end`
+                # and aligns forward onto exactly this header. Yielding it here
+                # duplicates one game per shard boundary.
                 if game_start >= end:
                     return
+                yield b''.join(buf), game_start
                 buf, game_start, have_moves = [line], off, False
             else:
                 buf.append(line)

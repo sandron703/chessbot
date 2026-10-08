@@ -3,7 +3,8 @@
 #
 #   make smoke        prove all seven stages connect (a few minutes, CPU-ok)
 #   make test         unit tests (tokenizer, masking, runtime parity)
-#   make data         self-play -> games        (stage 1)
+#   make ingest       PGN archive -> games      (stage 1a, parallel)
+#   make data         stockfish self-play -> games (stage 1b, optional)
 #   make prepare      games -> train/val.bin   (stage 2)
 #   make train        nanoGPT training         (stage 3)
 #   make eval         the five metrics         (stage 4)
@@ -15,18 +16,31 @@ SHELL     := /bin/bash
 PY        ?= ../.venv/bin/python
 NANOGPT   ?= ../nanoGPT
 
-MODEL     ?= small                  # small | medium
+# small | medium -- an inline comment here would leak its leading
+# whitespace into the variable and break every path built from it.
+MODEL     ?= small
 DATASET   ?= chess_uci
 OUTDIR    ?= $(NANOGPT)/out-chess-$(MODEL)
 CKPT      ?= $(OUTDIR)/ckpt.pt
 GPTC      ?= out/chess-$(MODEL).gptc
 
-# stage 1 -- self-play. GAMES is the dial that decides everything downstream:
-# the small model wants ~210k games (~64M tokens) to be Chinchilla-fed.
-GAMES     ?= 210000
+# stage 1 -- where games come from. GAMEDIR is what prepare reads, so point it
+# at whichever source you are using (or at a directory holding both).
 WORKERS   ?= $(shell nproc --ignore=2)
+
+# 1a: a PGN archive, e.g. a Lichess Elite monthly dump. One pass of ~425k
+# games is ~72M tokens, which is already the small model's full token budget.
+PGN       ?= data/lichess_elite_2020-06.pgn
+GAMEDIR   ?= data/lichess_elite
+
+# 1b: stockfish self-play, if you want engine-quality data instead of human.
+GAMES     ?= 210000
 DEPTH     ?= 6
-GAMEDIR   ?= data/selfplay
+SELFPLAY  ?= data/selfplay
+
+# stage 2 filters. Time forfeits carry a 1-0/0-1 label that does not reflect
+# the position, which is noise for the <result> conditioning token.
+PREP_ARGS ?= --termination Normal --block-size 384
 
 # stage 4 -- evaluation opponent
 SKILL     ?= 0
@@ -39,24 +53,27 @@ BOARD     ?= uno-q.local
 BOARD_USER?= arduino
 BOARD_DIR ?= ~/chessgpt
 
-.PHONY: help smoke test data prepare train eval export play deploy bench-board clean distclean stockfish
+.PHONY: help smoke test ingest data prepare train eval export play uci deploy bench-board clean distclean stockfish
 
 help:
-	@sed -n '4,12p' Makefile | sed 's/^#   //'
+	@sed -n '4,13p' Makefile | sed 's/^#   //'
 
 stockfish: bin/stockfish
 bin/stockfish:
 	./scripts/get_stockfish.sh
 
-# --- stage 1 ---------------------------------------------------------------
+# --- stage 1a: PGN archive -------------------------------------------------
+ingest:
+	$(PY) -m chessgpt.ingest --pgn $(PGN) --out $(GAMEDIR) --workers $(WORKERS)
+
+# --- stage 1b: stockfish self-play (optional) ------------------------------
 data: bin/stockfish
-	$(PY) -m chessgpt.selfplay --out $(GAMEDIR) --games $(GAMES) \
+	$(PY) -m chessgpt.selfplay --out $(SELFPLAY) --games $(GAMES) \
 		--workers $(WORKERS) --depth $(DEPTH)
 
 # --- stage 2 ---------------------------------------------------------------
 prepare:
-	$(PY) -m chessgpt.prepare --src $(GAMEDIR) --dataset $(DATASET) \
-		--block-size 384
+	$(PY) -m chessgpt.prepare --src $(GAMEDIR) --dataset $(DATASET) $(PREP_ARGS)
 
 # --- stage 3 ---------------------------------------------------------------
 train:
@@ -116,4 +133,4 @@ clean:
 		$(NANOGPT)/out-chess-smoke
 
 distclean: clean
-	rm -rf $(GAMEDIR) $(NANOGPT)/data/$(DATASET) bin
+	rm -rf $(GAMEDIR) $(SELFPLAY) $(NANOGPT)/data/$(DATASET) bin
