@@ -1,0 +1,6 @@
+bin/
+data/
+out/
+runtime/gptc-cli
+__pycache__/
+*.pyc

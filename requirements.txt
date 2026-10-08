@@ -1,0 +1,10 @@
+# Desktop (training + evaluation). torch is assumed present already --
+# nanoGPT needs it and the repo ships a .venv with it.
+chess>=1.11          # move generation for legality masking, PGN, UCI opponent
+zstandard>=0.22      # game shards and Lichess .pgn.zst dumps
+numpy>=1.24
+tqdm>=4.66
+
+# Board side (Cortex-A53 / Debian) needs only:
+#   numpy, chess
+# No torch. runtime_np.py reads the exported .gptc directly.
